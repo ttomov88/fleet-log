@@ -188,6 +188,7 @@
     cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center;
     color: var(--ink-soft);
   }
+  .item-actions button.done-btn { background: rgba(47,158,91,0.12); color: var(--green); font-weight: 700; }
   .empty-hint { font-size: 13px; color: var(--ink-soft); padding: 10px 2px; }
 
   .fab {
@@ -571,6 +572,22 @@ function renderDrawer() {
   }
 }
 
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function markItemDone(vehicleId, category, itemId) {
+  const vehicle = state.data.vehicles.find(v => v.id === vehicleId);
+  const item = vehicle.items[category].find(i => i.id === itemId);
+  if (!item) return;
+  item.lastDate = todayISO();
+  item.dueDate = null;
+  saveData();
+  render();
+  showToast("Marked as done · set the next due date");
+  openItemModal(vehicleId, category, itemId);
+}
+
 function gcalUrl(item) {
   const d = item.dueDate ? item.dueDate.replace(/-/g, "") : "";
   const next = item.dueDate ? new Date(item.dueDate + "T00:00:00") : null;
@@ -703,6 +720,12 @@ function renderVehicle() {
         `;
         const actions = document.createElement("div");
         actions.className = "item-actions";
+        const doneBtn = document.createElement("button");
+        doneBtn.className = "done-btn";
+        doneBtn.innerHTML = "&#10003;";
+        doneBtn.title = "Mark as done";
+        doneBtn.onclick = () => markItemDone(vehicle.id, cat.key, item.id);
+        actions.appendChild(doneBtn);
         const editBtn = document.createElement("button");
         editBtn.innerHTML = "&#9998;";
         editBtn.onclick = () => openItemModal(vehicle.id, cat.key, item.id);
