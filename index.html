@@ -141,7 +141,7 @@
     padding: 14px; display: flex; align-items: center; gap: 14px; cursor: pointer;
   }
   .picker-card .avatar { width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; color: var(--navy); }
-  .picker-card-info { min-width: 0; }
+  .picker-card-info { min-width: 0; flex: 1; }
   .picker-card-name { font-weight: 700; font-size: 16px; color: var(--ink); }
   .picker-card-sub { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
   .picker-add {
@@ -157,6 +157,14 @@
     width: 100%; font-size: 15px; font-weight: 600; color: var(--ink);
   }
   .category-pick-item .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  .status-count {
+    flex-shrink: 0; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11.5px; font-weight: 700; color: white;
+  }
+  .status-count.sc-red { background: var(--red); }
+  .status-count.sc-amber { background: var(--amber); color: var(--navy); }
 
   main { flex: 1; padding: 16px; padding-bottom: 100px; max-width: 640px; margin: 0 auto; width: 100%; }
 
@@ -178,6 +186,7 @@
   .badge-green { background: var(--green); box-shadow: 0 0 0 4px rgba(47,158,91,0.14); }
   .badge-amber { background: var(--amber); box-shadow: 0 0 0 4px rgba(232,163,61,0.16); }
   .badge-red { background: var(--red); box-shadow: 0 0 0 4px rgba(209,67,67,0.15); }
+  .badge-none { background: #B9B2A3; box-shadow: 0 0 0 4px rgba(91,101,114,0.12); }
 
   .item-main { flex: 1; min-width: 0; }
   .item-main .label { font-weight: 600; font-size: 15px; }
@@ -324,6 +333,17 @@
     <div class="field">
       <label for="itemDue">Due date</label>
       <input id="itemDue" type="date" />
+    </div>
+    <div class="field">
+      <label for="itemRepeat">Repeats every (optional)</label>
+      <select id="itemRepeat">
+        <option value="">Doesn't repeat</option>
+        <option value="1">1 month</option>
+        <option value="3">3 months</option>
+        <option value="6">6 months</option>
+        <option value="12">12 months</option>
+        <option value="24">24 months</option>
+      </select>
     </div>
     <div class="field">
       <label for="itemNotes">Notes (optional)</label>
@@ -484,7 +504,7 @@ function daysUntil(dateStr) {
   return Math.round((due - today) / 86400000);
 }
 function statusClass(days) {
-  if (days === null) return "badge-green";
+  if (days === null) return "badge-none";
   if (days < 0) return "badge-red";
   if (days <= 30) return "badge-amber";
   return "badge-green";
@@ -563,6 +583,7 @@ function renderDrawer() {
     editBtn.onclick = (e) => { e.stopPropagation(); openVehicleEditModal(v.id); };
     row.appendChild(avatar);
     row.appendChild(name);
+    row.insertAdjacentHTML("beforeend", statusCountBadgeHTML(v));
     row.appendChild(editBtn);
     row.onclick = () => { state.activeVehicleId = v.id; closeDrawer(); render(); };
     drawerList.appendChild(row);
@@ -572,20 +593,53 @@ function renderDrawer() {
   }
 }
 
+function vehicleStatusCounts(vehicle) {
+  let overdue = 0, soon = 0;
+  CATEGORIES.forEach(cat => {
+    (vehicle.items[cat.key] || []).forEach(item => {
+      const days = daysUntil(item.dueDate);
+      if (days === null) return;
+      if (days < 0) overdue++;
+      else if (days <= 30) soon++;
+    });
+  });
+  return { overdue, soon };
+}
+function statusCountBadgeHTML(vehicle) {
+  const { overdue, soon } = vehicleStatusCounts(vehicle);
+  if (overdue > 0) return `<span class="status-count sc-red">${overdue}</span>`;
+  if (soon > 0) return `<span class="status-count sc-amber">${soon}</span>`;
+  return "";
+}
+
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function addMonthsISO(dateStr, months) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
 }
 
 function markItemDone(vehicleId, category, itemId) {
   const vehicle = state.data.vehicles.find(v => v.id === vehicleId);
   const item = vehicle.items[category].find(i => i.id === itemId);
   if (!item) return;
-  item.lastDate = todayISO();
-  item.dueDate = null;
-  saveData();
-  render();
-  showToast("Marked as done · set the next due date");
-  openItemModal(vehicleId, category, itemId);
+  const today = todayISO();
+  item.lastDate = today;
+  if (item.repeatMonths) {
+    item.dueDate = addMonthsISO(today, item.repeatMonths);
+    saveData();
+    render();
+    showToast(`Marked as done · next due in ${item.repeatMonths} month${item.repeatMonths === 1 ? "" : "s"}`);
+  } else {
+    item.dueDate = null;
+    saveData();
+    render();
+    showToast("Marked as done · set the next due date");
+    openItemModal(vehicleId, category, itemId);
+  }
 }
 
 function gcalUrl(item) {
@@ -621,6 +675,7 @@ function renderVehiclePicker() {
     `;
     card.appendChild(avatar);
     card.appendChild(info);
+    card.insertAdjacentHTML("beforeend", statusCountBadgeHTML(v));
     card.onclick = () => { state.activeVehicleId = v.id; render(); };
     list.appendChild(card);
   });
@@ -715,7 +770,7 @@ function renderVehicle() {
           <div class="item-badge ${statusClass(days)}"></div>
           <div class="item-main">
             <div class="label">${escapeHtml(item.label)}</div>
-            <div class="sub">${humanDue(days, item.dueDate)}${item.lastDate ? " · Last: " + humanLast(item.lastDate) : ""}${item.notes ? " · " + escapeHtml(item.notes) : ""}</div>
+            <div class="sub">${humanDue(days, item.dueDate)}${item.lastDate ? " · Last: " + humanLast(item.lastDate) : ""}${item.repeatMonths ? " · Repeats every " + item.repeatMonths + "mo" : ""}${item.notes ? " · " + escapeHtml(item.notes) : ""}</div>
           </div>
         `;
         const actions = document.createElement("div");
@@ -758,6 +813,7 @@ const itemOverlay = document.getElementById("itemOverlay");
 const itemLabel = document.getElementById("itemLabel");
 const itemLast = document.getElementById("itemLast");
 const itemDue = document.getElementById("itemDue");
+const itemRepeat = document.getElementById("itemRepeat");
 const itemNotes = document.getElementById("itemNotes");
 const itemDeleteRow = document.getElementById("itemDeleteRow");
 const itemModalTitle = document.getElementById("itemModalTitle");
@@ -778,6 +834,7 @@ function openItemModal(vehicleId, category, itemId) {
   itemLabel.value = item ? item.label : "";
   itemLast.value = item ? item.lastDate || "" : "";
   itemDue.value = item ? item.dueDate || "" : "";
+  itemRepeat.value = item && item.repeatMonths ? String(item.repeatMonths) : "";
   itemNotes.value = item ? item.notes || "" : "";
   itemDeleteRow.style.display = item ? "flex" : "none";
   itemCalLinks.innerHTML = "";
@@ -795,15 +852,18 @@ document.getElementById("itemSave").onclick = () => {
   const { vehicleId, category, itemId } = state.editing;
   const vehicle = state.data.vehicles.find(v => v.id === vehicleId);
   if (!itemLabel.value.trim()) { showToast("Please enter a name"); return; }
+  const repeatMonths = itemRepeat.value ? parseInt(itemRepeat.value, 10) : null;
   if (itemId) {
     const item = vehicle.items[category].find(i => i.id === itemId);
     item.label = itemLabel.value.trim();
     item.lastDate = itemLast.value || null;
     item.dueDate = itemDue.value || null;
+    item.repeatMonths = repeatMonths;
     item.notes = itemNotes.value.trim();
   } else {
     vehicle.items[category].push({
-      id: uid(), label: itemLabel.value.trim(), lastDate: itemLast.value || null, dueDate: itemDue.value || null, notes: itemNotes.value.trim()
+      id: uid(), label: itemLabel.value.trim(), lastDate: itemLast.value || null, dueDate: itemDue.value || null,
+      repeatMonths, notes: itemNotes.value.trim()
     });
   }
   saveData();
@@ -814,6 +874,8 @@ document.getElementById("itemSave").onclick = () => {
 document.getElementById("itemDelete").onclick = () => {
   const { vehicleId, category, itemId } = state.editing;
   const vehicle = state.data.vehicles.find(v => v.id === vehicleId);
+  const item = vehicle.items[category].find(i => i.id === itemId);
+  if (!confirm(`Delete "${item ? item.label : "this item"}"? This can't be undone.`)) return;
   vehicle.items[category] = vehicle.items[category].filter(i => i.id !== itemId);
   saveData();
   closeItemModal();
