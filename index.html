@@ -44,10 +44,11 @@
   header.topbar .brand {
     display: flex; align-items: center; gap: 10px;
     background: none; border: none; padding: 6px; margin: -6px; border-radius: 8px;
-    cursor: pointer;
+    cursor: pointer; color: inherit;
   }
   header.topbar .brand:active { background: rgba(255,255,255,0.08); }
   header.topbar .brand svg { width: 26px; height: 26px; flex-shrink: 0; }
+  header.topbar .brand h1 { color: var(--cream); }
   header.topbar h1 { font-size: 16px; margin: 0; font-weight: 700; letter-spacing: 0.2px; opacity: 0.9; }
   header.topbar button.icon-btn {
     background: rgba(255,255,255,0.08); border: none; color: var(--cream);
