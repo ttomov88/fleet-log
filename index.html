@@ -260,6 +260,19 @@
   .photo-preview img { width: 100%; height: 100%; object-fit: cover; }
   .photo-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 
+  .attachment-box {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--cream); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; font-size: 13.5px; color: var(--ink-soft);
+  }
+  .attachment-box .attachment-icon { width: 18px; height: 18px; flex-shrink: 0; color: var(--ink-soft); }
+  .attachment-box span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #itemAttachmentView {
+    font-size: 12px; color: var(--navy); text-decoration: none; font-weight: 600;
+    background: var(--cream); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
+    align-self: center;
+  }
+
   .drawer-item .avatar, .vehicle-header .avatar, .settings-row .avatar {
     overflow: hidden;
   }
@@ -355,6 +368,19 @@
     <div class="field">
       <label for="itemNotes">Notes (optional)</label>
       <input id="itemNotes" placeholder="e.g. Service center, policy number" />
+    </div>
+    <div class="field">
+      <label>Attachment (optional)</label>
+      <div class="attachment-box">
+        <svg class="attachment-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        <span id="itemAttachmentInfo">No file attached</span>
+      </div>
+      <div class="photo-buttons" style="margin-top:8px;">
+        <button type="button" class="btn btn-secondary" id="itemAttachmentPick" style="flex:none; padding:9px 14px;">Upload file</button>
+        <button type="button" class="btn btn-secondary" id="itemAttachmentRemove" style="flex:none; padding:9px 14px; display:none;">Remove</button>
+        <a id="itemAttachmentView" href="#" target="_blank" style="display:none;">View</a>
+      </div>
+      <input type="file" id="itemAttachmentInput" accept="application/pdf,image/*" style="display:none;" />
     </div>
     <div class="cal-links" id="itemCalLinks"></div>
     <div class="modal-actions">
@@ -502,6 +528,100 @@ function loadSettings() {
 }
 function saveSettings() { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); }
 
+/* ---------------- File store (IndexedDB) ----------------
+   Vehicle photos and item attachments live here as real Blobs, not as
+   base64 text in localStorage — localStorage has a tiny (5-10MB) shared
+   quota and base64 inflates file size by ~33%, so a handful of documents
+   per vehicle would blow past it fast. IndexedDB comfortably holds
+   hundreds of MB. localStorage still holds the actual vehicle/item data
+   (dates, names, notes) — just file bytes moved out. */
+const FILES_DB_NAME = "fleetlog_files";
+const FILES_STORE = "files";
+let filesDbPromise = null;
+
+function openFilesDB() {
+  if (filesDbPromise) return filesDbPromise;
+  filesDbPromise = new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) { reject(new Error("IndexedDB unavailable")); return; }
+    const req = indexedDB.open(FILES_DB_NAME, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(FILES_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return filesDbPromise;
+}
+async function fileStorePut(id, blob) {
+  const db = await openFilesDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FILES_STORE, "readwrite");
+    tx.objectStore(FILES_STORE).put(blob, id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function fileStoreGet(id) {
+  const db = await openFilesDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FILES_STORE, "readonly");
+    const req = tx.objectStore(FILES_STORE).get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function fileStoreDelete(id) {
+  if (!id) return;
+  try {
+    const db = await openFilesDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(FILES_STORE, "readwrite");
+      tx.objectStore(FILES_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {}
+}
+function dataUrlToBlob(dataUrl) {
+  const [meta, b64] = dataUrl.split(",");
+  const type = (meta.match(/data:(.*);base64/) || [,"application/octet-stream"])[1];
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type });
+}
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// One-time migration: any vehicle photo or item attachment still holding an
+// inline base64 string (from before this change) gets moved into IndexedDB.
+async function migrateInlineFilesToStore() {
+  let touched = false;
+  for (const vehicle of state.data.vehicles) {
+    if (vehicle.photo && typeof vehicle.photo === "string" && vehicle.photo.startsWith("data:")) {
+      const id = "photo_" + uid();
+      await fileStorePut(id, dataUrlToBlob(vehicle.photo));
+      vehicle.photo = id;
+      touched = true;
+    }
+    for (const cat of CATEGORIES) {
+      for (const item of (vehicle.items[cat.key] || [])) {
+        if (item.attachment && item.attachment.dataUrl) {
+          const id = "att_" + uid();
+          await fileStorePut(id, dataUrlToBlob(item.attachment.dataUrl));
+          item.attachment = { id, name: item.attachment.name, type: item.attachment.type };
+          touched = true;
+        }
+      }
+    }
+  }
+  if (touched) saveData();
+}
+
 const state = {
   data: loadData(),
   settings: loadSettings(),
@@ -559,8 +679,15 @@ function initials(name) {
 }
 function applyAvatar(el, vehicle, index) {
   if (vehicle.photo) {
-    el.style.background = "transparent";
-    el.innerHTML = `<img src="${vehicle.photo}" alt="" />`;
+    el.style.background = avatarColor(index);
+    el.innerHTML = "";
+    el.textContent = initials(vehicle.name);
+    fileStoreGet(vehicle.photo).then(blob => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      el.style.background = "transparent";
+      el.innerHTML = `<img src="${url}" alt="" />`;
+    }).catch(() => {});
   } else {
     el.style.background = avatarColor(index);
     el.innerHTML = "";
@@ -654,6 +781,19 @@ function markItemDone(vehicleId, category, itemId) {
     showToast("Marked as done · set the next due date");
     openItemModal(vehicleId, category, itemId);
   }
+}
+
+function removeItemAttachment(vehicleId, category, itemId, fileName) {
+  if (!confirm(`Remove "${fileName}" from this item?`)) return;
+  const vehicle = state.data.vehicles.find(v => v.id === vehicleId);
+  const item = vehicle.items[category].find(i => i.id === itemId);
+  if (!item) return;
+  const attachmentId = item.attachment ? item.attachment.id : null;
+  item.attachment = null;
+  saveData();
+  render();
+  showToast("Attachment removed");
+  if (attachmentId) fileStoreDelete(attachmentId);
 }
 
 function gcalUrl(item) {
@@ -814,12 +954,39 @@ function renderVehicle() {
           calBtn.onclick = () => window.open(gcalUrl(item), "_blank");
           actions.appendChild(calBtn);
         }
+        if (item.attachment) {
+          const fileBtn = document.createElement("button");
+          fileBtn.title = item.attachment.name;
+          fileBtn.innerHTML = "&#128206;";
+          fileBtn.onclick = () => openAttachment(item.attachment);
+          actions.appendChild(fileBtn);
+          const fileDeleteBtn = document.createElement("button");
+          fileDeleteBtn.innerHTML = "&#10005;";
+          fileDeleteBtn.title = "Remove attachment";
+          fileDeleteBtn.style.cssText = "font-size:12px;";
+          fileDeleteBtn.onclick = () => removeItemAttachment(vehicle.id, cat.key, item.id, item.attachment.name);
+          actions.appendChild(fileDeleteBtn);
+        }
         card.appendChild(actions);
         section.appendChild(card);
       });
     }
     mainEl.appendChild(section);
   });
+}
+
+async function openAttachment(attachment) {
+  const blob = await fileStoreGet(attachment.id);
+  if (!blob) { showToast("Couldn't find that file"); return; }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = attachment.name;
+  a.target = "_blank";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 function escapeHtml(s) {
@@ -841,11 +1008,53 @@ const itemNotes = document.getElementById("itemNotes");
 const itemDeleteRow = document.getElementById("itemDeleteRow");
 const itemModalTitle = document.getElementById("itemModalTitle");
 const itemCalLinks = document.getElementById("itemCalLinks");
+const itemAttachmentInfo = document.getElementById("itemAttachmentInfo");
+const itemAttachmentInput = document.getElementById("itemAttachmentInput");
+const itemAttachmentRemove = document.getElementById("itemAttachmentRemove");
+const itemAttachmentView = document.getElementById("itemAttachmentView");
+let existingAttachment = null;   // { id, name, type } already saved on the item being edited, or null
+let pendingAttachmentFile = null; // newly picked File this session, not yet saved
+let removeAttachmentRequested = false;
 
 const ITEM_PLACEHOLDERS = {
   maintenance: "e.g. Oil change, Winter tires",
   insurance: "e.g. Third-party liability, Casco",
   inspection: "e.g. Annual technical inspection"
+};
+
+function renderAttachmentPreview(name, previewUrl) {
+  if (name) {
+    itemAttachmentInfo.textContent = name;
+    itemAttachmentRemove.style.display = "inline-block";
+    if (previewUrl) {
+      itemAttachmentView.style.display = "inline-block";
+      itemAttachmentView.href = previewUrl;
+      itemAttachmentView.download = name;
+    } else {
+      itemAttachmentView.style.display = "none";
+    }
+  } else {
+    itemAttachmentInfo.textContent = "No file attached";
+    itemAttachmentRemove.style.display = "none";
+    itemAttachmentView.style.display = "none";
+  }
+}
+
+document.getElementById("itemAttachmentPick").onclick = () => itemAttachmentInput.click();
+itemAttachmentRemove.onclick = () => {
+  pendingAttachmentFile = null;
+  removeAttachmentRequested = true;
+  renderAttachmentPreview(null, null);
+};
+itemAttachmentInput.onchange = (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const maxSize = 10 * 1024 * 1024;
+  if (file.size > maxSize) { showToast("File is too large (max 10MB)"); return; }
+  pendingAttachmentFile = file;
+  removeAttachmentRequested = false;
+  renderAttachmentPreview(file.name, URL.createObjectURL(file));
 };
 
 function openItemModal(vehicleId, category, itemId) {
@@ -859,6 +1068,15 @@ function openItemModal(vehicleId, category, itemId) {
   itemDue.value = item ? item.dueDate || "" : "";
   itemRepeat.value = item && item.repeatMonths ? String(item.repeatMonths) : "";
   itemNotes.value = item ? item.notes || "" : "";
+  existingAttachment = item && item.attachment ? item.attachment : null;
+  pendingAttachmentFile = null;
+  removeAttachmentRequested = false;
+  renderAttachmentPreview(existingAttachment ? existingAttachment.name : null, null);
+  if (existingAttachment) {
+    fileStoreGet(existingAttachment.id).then(blob => {
+      if (blob) renderAttachmentPreview(existingAttachment.name, URL.createObjectURL(blob));
+    }).catch(() => {});
+  }
   itemDeleteRow.style.display = item ? "flex" : "none";
   itemCalLinks.innerHTML = "";
   if (item && item.dueDate) {
@@ -870,12 +1088,27 @@ function openItemModal(vehicleId, category, itemId) {
 }
 function closeItemModal() { itemOverlay.classList.remove("open"); state.editing = null; }
 
+async function commitPendingAttachment() {
+  if (pendingAttachmentFile) {
+    if (existingAttachment) await fileStoreDelete(existingAttachment.id);
+    const newId = "att_" + uid();
+    await fileStorePut(newId, pendingAttachmentFile);
+    return { id: newId, name: pendingAttachmentFile.name, type: pendingAttachmentFile.type };
+  }
+  if (removeAttachmentRequested) {
+    if (existingAttachment) await fileStoreDelete(existingAttachment.id);
+    return null;
+  }
+  return existingAttachment;
+}
+
 document.getElementById("itemCancel").onclick = closeItemModal;
-document.getElementById("itemSave").onclick = () => {
+document.getElementById("itemSave").onclick = async () => {
   const { vehicleId, category, itemId } = state.editing;
   const vehicle = state.data.vehicles.find(v => v.id === vehicleId);
   if (!itemLabel.value.trim()) { showToast("Please enter a name"); return; }
   const repeatMonths = itemRepeat.value ? parseInt(itemRepeat.value, 10) : null;
+  const attachment = await commitPendingAttachment();
   if (itemId) {
     const item = vehicle.items[category].find(i => i.id === itemId);
     item.label = itemLabel.value.trim();
@@ -883,10 +1116,11 @@ document.getElementById("itemSave").onclick = () => {
     item.dueDate = itemDue.value || null;
     item.repeatMonths = repeatMonths;
     item.notes = itemNotes.value.trim();
+    item.attachment = attachment;
   } else {
     vehicle.items[category].push({
       id: uid(), label: itemLabel.value.trim(), lastDate: itemLast.value || null, dueDate: itemDue.value || null,
-      repeatMonths, notes: itemNotes.value.trim()
+      repeatMonths, notes: itemNotes.value.trim(), attachment
     });
   }
   saveData();
@@ -894,11 +1128,12 @@ document.getElementById("itemSave").onclick = () => {
   render();
   checkDueReminders(true);
 };
-document.getElementById("itemDelete").onclick = () => {
+document.getElementById("itemDelete").onclick = async () => {
   const { vehicleId, category, itemId } = state.editing;
   const vehicle = state.data.vehicles.find(v => v.id === vehicleId);
   const item = vehicle.items[category].find(i => i.id === itemId);
   if (!confirm(`Delete "${item ? item.label : "this item"}"? This can't be undone.`)) return;
+  if (item && item.attachment) await fileStoreDelete(item.attachment.id);
   vehicle.items[category] = vehicle.items[category].filter(i => i.id !== itemId);
   saveData();
   closeItemModal();
@@ -941,13 +1176,15 @@ const vehiclePhotoPreview = document.getElementById("vehiclePhotoPreview");
 const vehiclePhotoInput = document.getElementById("vehiclePhotoInput");
 const vehiclePhotoRemove = document.getElementById("vehiclePhotoRemove");
 let editingVehicleId = null;
-let pendingPhoto = null; // data URL, or null for no photo
+let existingPhotoId = null;   // fileId already saved on the vehicle being edited, or null
+let pendingPhotoBlob = null;  // newly picked Blob this session, not yet saved
+let removePhotoRequested = false;
 
 document.getElementById("vehicleCancel").onclick = () => vehicleOverlay.classList.remove("open");
 
-function renderPhotoPreview() {
-  if (pendingPhoto) {
-    vehiclePhotoPreview.innerHTML = `<img src="${pendingPhoto}" alt="" />`;
+function renderPhotoPreview(previewUrl) {
+  if (previewUrl) {
+    vehiclePhotoPreview.innerHTML = `<img src="${previewUrl}" alt="" />`;
     vehiclePhotoRemove.style.display = "inline-block";
   } else {
     vehiclePhotoPreview.innerHTML = "&#128663;";
@@ -956,7 +1193,11 @@ function renderPhotoPreview() {
 }
 
 document.getElementById("vehiclePhotoPick").onclick = () => vehiclePhotoInput.click();
-vehiclePhotoRemove.onclick = () => { pendingPhoto = null; renderPhotoPreview(); };
+vehiclePhotoRemove.onclick = () => {
+  pendingPhotoBlob = null;
+  removePhotoRequested = true;
+  renderPhotoPreview(null);
+};
 vehiclePhotoInput.onchange = (e) => {
   const file = e.target.files[0];
   e.target.value = "";
@@ -966,8 +1207,8 @@ vehiclePhotoInput.onchange = (e) => {
   const reader = new FileReader();
   reader.onload = () => {
     img.onload = () => {
-      // Downscale to keep local storage usage small
-      const maxDim = 300;
+      // Downscale to keep the stored file small
+      const maxDim = 500;
       let { width, height } = img;
       if (width > height && width > maxDim) { height = Math.round(height * maxDim / width); width = maxDim; }
       else if (height > maxDim) { width = Math.round(width * maxDim / height); height = maxDim; }
@@ -975,8 +1216,11 @@ vehiclePhotoInput.onchange = (e) => {
       canvas.width = width; canvas.height = height;
       const ctx = canvas.getContext("2d");
       ctx.drawImage(img, 0, 0, width, height);
-      pendingPhoto = canvas.toDataURL("image/jpeg", 0.85);
-      renderPhotoPreview();
+      canvas.toBlob((blob) => {
+        pendingPhotoBlob = blob;
+        removePhotoRequested = false;
+        renderPhotoPreview(URL.createObjectURL(blob));
+      }, "image/jpeg", 0.87);
     };
     img.src = reader.result;
   };
@@ -985,14 +1229,16 @@ vehiclePhotoInput.onchange = (e) => {
 
 function openVehicleModal() {
   editingVehicleId = null;
-  pendingPhoto = null;
+  existingPhotoId = null;
+  pendingPhotoBlob = null;
+  removePhotoRequested = false;
   vehicleModalTitle.textContent = "Add vehicle";
   vehicleDeleteRow.style.display = "none";
   document.getElementById("vehicleName").value = "";
   document.getElementById("vehicleReg").value = "";
   document.getElementById("vehicleVin").value = "";
   document.getElementById("vehicleNote").value = "";
-  renderPhotoPreview();
+  renderPhotoPreview(null);
   vehicleOverlay.classList.add("open");
 }
 
@@ -1000,27 +1246,49 @@ function openVehicleEditModal(vehicleId) {
   const v = state.data.vehicles.find(x => x.id === vehicleId);
   if (!v) return;
   editingVehicleId = vehicleId;
-  pendingPhoto = v.photo || null;
+  existingPhotoId = v.photo || null;
+  pendingPhotoBlob = null;
+  removePhotoRequested = false;
   vehicleModalTitle.textContent = "Edit vehicle";
   vehicleDeleteRow.style.display = "flex";
   document.getElementById("vehicleName").value = v.name;
   document.getElementById("vehicleReg").value = v.registration || "";
   document.getElementById("vehicleVin").value = v.vin || "";
   document.getElementById("vehicleNote").value = v.note || "";
-  renderPhotoPreview();
+  renderPhotoPreview(null);
+  if (existingPhotoId) {
+    fileStoreGet(existingPhotoId).then(blob => {
+      if (blob) renderPhotoPreview(URL.createObjectURL(blob));
+    }).catch(() => {});
+  }
   vehicleOverlay.classList.add("open");
 }
 
-document.getElementById("vehicleSave").onclick = () => {
+async function commitPendingPhoto() {
+  if (pendingPhotoBlob) {
+    if (existingPhotoId) await fileStoreDelete(existingPhotoId);
+    const newId = "photo_" + uid();
+    await fileStorePut(newId, pendingPhotoBlob);
+    return newId;
+  }
+  if (removePhotoRequested) {
+    if (existingPhotoId) await fileStoreDelete(existingPhotoId);
+    return null;
+  }
+  return existingPhotoId;
+}
+
+document.getElementById("vehicleSave").onclick = async () => {
   const name = document.getElementById("vehicleName").value.trim();
   const registration = document.getElementById("vehicleReg").value.trim();
   const vin = document.getElementById("vehicleVin").value.trim().toUpperCase();
   const note = document.getElementById("vehicleNote").value.trim();
   if (!name) { showToast("Please enter a vehicle name"); return; }
+  const photoId = await commitPendingPhoto();
   if (editingVehicleId) {
     const v = state.data.vehicles.find(x => x.id === editingVehicleId);
     v.name = name;
-    v.photo = pendingPhoto;
+    v.photo = photoId;
     v.registration = registration;
     v.vin = vin;
     v.note = note;
@@ -1029,7 +1297,7 @@ document.getElementById("vehicleSave").onclick = () => {
     render();
     showToast("Vehicle updated");
   } else {
-    const v = { id: uid(), name, photo: pendingPhoto, registration, vin, note, items: { maintenance: [], insurance: [], inspection: [] } };
+    const v = { id: uid(), name, photo: photoId, registration, vin, note, items: { maintenance: [], insurance: [], inspection: [] } };
     state.data.vehicles.push(v);
     state.activeVehicleId = v.id;
     saveData();
@@ -1038,10 +1306,16 @@ document.getElementById("vehicleSave").onclick = () => {
   }
 };
 
-document.getElementById("vehicleDelete").onclick = () => {
+document.getElementById("vehicleDelete").onclick = async () => {
   if (!editingVehicleId) return;
   const v = state.data.vehicles.find(x => x.id === editingVehicleId);
   if (!confirm(`Delete "${v.name}" and all its items? This can't be undone.`)) return;
+  if (v.photo) await fileStoreDelete(v.photo);
+  for (const cat of CATEGORIES) {
+    for (const item of (v.items[cat.key] || [])) {
+      if (item.attachment) await fileStoreDelete(item.attachment.id);
+    }
+  }
   state.data.vehicles = state.data.vehicles.filter(x => x.id !== editingVehicleId);
   if (state.activeVehicleId === editingVehicleId) {
     state.activeVehicleId = state.data.vehicles[0]?.id || null;
@@ -1084,8 +1358,28 @@ document.getElementById("leadDays").onchange = (e) => {
 };
 
 /* ---------------- Export / Import ---------------- */
-document.getElementById("exportBtn").onclick = () => {
-  const blob = new Blob([JSON.stringify(state.data, null, 2)], { type: "application/json" });
+document.getElementById("exportBtn").onclick = async () => {
+  showToast("Preparing backup\u2026");
+  // Bundle every referenced file (vehicle photos + item attachments) as base64
+  // into the same JSON so the backup stays a single, restorable file.
+  const files = {};
+  const fileIds = [];
+  state.data.vehicles.forEach(v => {
+    if (v.photo) fileIds.push(v.photo);
+    CATEGORIES.forEach(cat => {
+      (v.items[cat.key] || []).forEach(item => {
+        if (item.attachment) fileIds.push(item.attachment.id);
+      });
+    });
+  });
+  for (const id of fileIds) {
+    try {
+      const blob = await fileStoreGet(id);
+      if (blob) files[id] = { type: blob.type, data: await blobToDataUrl(blob) };
+    } catch (e) {}
+  }
+  const payload = { vehicles: state.data.vehicles, files };
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = `fleet-log-backup-${new Date().toISOString().slice(0,10)}.json`;
@@ -1098,12 +1392,21 @@ document.getElementById("importFile").onchange = (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const parsed = JSON.parse(reader.result);
       if (!parsed.vehicles) throw new Error("bad format");
-      state.data = parsed;
-      state.activeVehicleId = state.data.vehicles[0]?.id || null;
+      showToast("Restoring backup\u2026");
+      // Write any bundled files into IndexedDB before switching over the data,
+      // so photo/attachment references resolve as soon as we render.
+      if (parsed.files) {
+        for (const [id, f] of Object.entries(parsed.files)) {
+          try { await fileStorePut(id, dataUrlToBlob(f.data)); } catch (e) {}
+        }
+      }
+      state.data = { vehicles: parsed.vehicles };
+      await migrateInlineFilesToStore(); // handles older backups with inline base64 files
+      state.activeVehicleId = null;
       saveData();
       render();
       settingsOverlay.classList.remove("open");
@@ -1193,6 +1496,10 @@ document.addEventListener("visibilitychange", () => {
 /* ---------------- Init ---------------- */
 render();
 setTimeout(() => checkDueReminders(false), 1200);
+migrateInlineFilesToStore().then(() => {
+  // Re-render in case the current screen shows a photo/attachment that just moved store.
+  render();
+}).catch(() => {});
 </script>
 </body>
 </html>
