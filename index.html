@@ -75,9 +75,13 @@
   .drawer-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-right: 2px; }
   .drawer-item {
     display: flex; align-items: center; gap: 11px; padding: 10px 8px; border-radius: 12px;
-    cursor: pointer;
+    cursor: pointer; user-select: none; -webkit-user-select: none; transition: box-shadow 0.15s, transform 0.15s;
   }
   .drawer-item.active { background: rgba(247,245,240,0.12); }
+  .drawer-item.dragging {
+    background: rgba(247,245,240,0.16); box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+    transform: scale(1.02); position: relative; z-index: 20;
+  }
   .drawer-item .avatar {
     width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
@@ -91,6 +95,8 @@
     background: none; border: none; color: rgba(247,245,240,0.5); font-size: 15px;
     cursor: pointer; padding: 6px; flex-shrink: 0;
   }
+  .grip-icon { flex-shrink: 0; display: flex; opacity: 0.4; touch-action: none; }
+  .drawer-item .grip-icon { color: rgba(247,245,240,0.6); }
   .drawer-add {
     margin-top: 10px; background: rgba(247,245,240,0.08);
     border: 1px dashed rgba(247,245,240,0.35); color: var(--cream);
@@ -142,11 +148,17 @@
   .picker-card {
     background: var(--paper); border: 1px solid var(--border); border-radius: var(--radius);
     padding: 14px; display: flex; align-items: center; gap: 14px; cursor: pointer;
+    user-select: none; -webkit-user-select: none; transition: box-shadow 0.15s, transform 0.15s;
+  }
+  .picker-card.dragging {
+    box-shadow: 0 12px 28px rgba(15,37,71,0.28); transform: scale(1.02);
+    position: relative; z-index: 20; border-color: var(--amber);
   }
   .picker-card .avatar { width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; color: var(--navy); }
   .picker-card-info { min-width: 0; flex: 1; }
   .picker-card-name { font-weight: 700; font-size: 16px; color: var(--ink); }
   .picker-card-sub { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
+  .picker-card .grip-icon { color: var(--ink-soft); }
   .picker-add {
     margin-top: 14px; width: 100%; background: var(--paper);
     border: 1px dashed var(--border); color: var(--navy);
@@ -707,6 +719,78 @@ document.getElementById("drawerCloseBtn").onclick = closeDrawer;
 drawerOverlay.addEventListener("click", (e) => { if (e.target === drawerOverlay) closeDrawer(); });
 document.getElementById("drawerAddBtn").onclick = () => { closeDrawer(); openVehicleModal(); };
 
+const GRIP_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><circle cx="8" cy="6" r="1.6"/><circle cx="16" cy="6" r="1.6"/><circle cx="8" cy="12" r="1.6"/><circle cx="16" cy="12" r="1.6"/><circle cx="8" cy="18" r="1.6"/><circle cx="16" cy="18" r="1.6"/></svg>';
+
+// Press-and-hold on a vehicle card/row to drag-reorder it. A short hold (350ms)
+// distinguishes "reorder" from a normal tap/scroll; small movement before that
+// cancels the hold so scrolling the list still works normally.
+function enableDragReorder(el, container, vehicleId, onTap) {
+  el.dataset.vehicleId = vehicleId;
+  let longPressTimer = null;
+  let dragging = false;
+  let hasDragged = false;
+  let startX = 0, startY = 0;
+  let pointerId = null;
+
+  el.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    startX = e.clientX; startY = e.clientY;
+    pointerId = e.pointerId;
+    hasDragged = false;
+    longPressTimer = setTimeout(() => {
+      dragging = true;
+      hasDragged = true;
+      try { el.setPointerCapture(pointerId); } catch (err) {}
+      el.classList.add("dragging");
+      el.style.touchAction = "none";
+      if (navigator.vibrate) navigator.vibrate(25);
+    }, 350);
+  });
+
+  el.addEventListener("pointermove", (e) => {
+    if (!dragging) {
+      if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) {
+        clearTimeout(longPressTimer);
+      }
+      return;
+    }
+    e.preventDefault();
+    const currentY = e.clientY;
+    const others = Array.from(container.children).filter(c => c !== el);
+    let insertBefore = null;
+    for (const other of others) {
+      const rect = other.getBoundingClientRect();
+      if (currentY < rect.top + rect.height / 2) { insertBefore = other; break; }
+    }
+    if (insertBefore) {
+      if (insertBefore !== el.nextSibling) container.insertBefore(el, insertBefore);
+    } else if (container.lastElementChild !== el) {
+      container.appendChild(el);
+    }
+  });
+
+  function endDrag() {
+    clearTimeout(longPressTimer);
+    if (dragging) {
+      dragging = false;
+      el.classList.remove("dragging");
+      el.style.touchAction = "";
+      try { el.releasePointerCapture(pointerId); } catch (err) {}
+      const newOrderIds = Array.from(container.children).map(c => c.dataset.vehicleId).filter(Boolean);
+      state.data.vehicles.sort((a, b) => newOrderIds.indexOf(a.id) - newOrderIds.indexOf(b.id));
+      saveData();
+      render();
+      showToast("Vehicle order updated");
+    }
+  }
+  el.addEventListener("pointerup", endDrag);
+  el.addEventListener("pointercancel", endDrag);
+  el.addEventListener("click", (e) => {
+    if (hasDragged) { hasDragged = false; e.stopPropagation(); return; }
+    onTap();
+  });
+}
+
 function renderDrawer() {
   drawerList.innerHTML = "";
   state.data.vehicles.forEach((v, i) => {
@@ -718,6 +802,9 @@ function renderDrawer() {
     const name = document.createElement("div");
     name.className = "name";
     name.textContent = v.name;
+    const grip = document.createElement("span");
+    grip.className = "grip-icon";
+    grip.innerHTML = GRIP_ICON;
     const editBtn = document.createElement("button");
     editBtn.className = "edit-btn";
     editBtn.innerHTML = "&#9998;";
@@ -725,8 +812,9 @@ function renderDrawer() {
     row.appendChild(avatar);
     row.appendChild(name);
     row.insertAdjacentHTML("beforeend", statusCountBadgeHTML(v));
+    row.appendChild(grip);
     row.appendChild(editBtn);
-    row.onclick = () => { state.activeVehicleId = v.id; closeDrawer(); render(); };
+    enableDragReorder(row, drawerList, v.id, () => { state.activeVehicleId = v.id; closeDrawer(); render(); });
     drawerList.appendChild(row);
   });
   if (state.data.vehicles.length === 0) {
@@ -830,7 +918,11 @@ function renderVehiclePicker() {
     card.appendChild(avatar);
     card.appendChild(info);
     card.insertAdjacentHTML("beforeend", statusCountBadgeHTML(v));
-    card.onclick = () => { state.activeVehicleId = v.id; render(); };
+    const grip = document.createElement("span");
+    grip.className = "grip-icon";
+    grip.innerHTML = GRIP_ICON;
+    card.appendChild(grip);
+    enableDragReorder(card, list, v.id, () => { state.activeVehicleId = v.id; render(); });
     list.appendChild(card);
   });
   wrap.appendChild(list);
