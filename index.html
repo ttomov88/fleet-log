@@ -126,11 +126,14 @@
   .vehicle-meta .meta-value { color: var(--ink); word-break: break-word; white-space: pre-wrap; }
 
   .empty-state {
-    text-align: center; padding: 60px 20px; color: var(--ink-soft);
+    text-align: center; padding: 60px 24px; color: var(--ink-soft);
   }
-  .empty-state .big-icon { font-size: 40px; margin-bottom: 10px; }
+  .empty-state .empty-icon { margin-bottom: 14px; display: flex; justify-content: center; }
+  .empty-state .empty-icon svg { width: 64px; height: 64px; }
+  .empty-state .empty-title { font-size: 18px; font-weight: 800; color: var(--navy); margin-bottom: 8px; }
+  .empty-state .empty-copy { font-size: 13.5px; line-height: 1.5; max-width: 300px; margin: 0 auto; }
   .empty-state button {
-    margin-top: 16px; background: var(--navy); color: var(--cream); border: none;
+    margin-top: 20px; background: var(--navy); color: var(--cream); border: none;
     padding: 12px 22px; border-radius: 10px; font-weight: 700; font-size: 14.5px; cursor: pointer;
   }
 
@@ -156,7 +159,8 @@
     border: 1px solid var(--border); background: var(--cream); cursor: pointer; text-align: left;
     width: 100%; font-size: 15px; font-weight: 600; color: var(--ink);
   }
-  .category-pick-item .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .category-pick-item .cat-icon { width: 20px; height: 20px; flex-shrink: 0; display: flex; }
+  .category-pick-item .cat-icon svg { width: 20px; height: 20px; }
 
   .status-count {
     flex-shrink: 0; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
@@ -168,8 +172,11 @@
 
   main { flex: 1; padding: 16px; padding-bottom: 100px; max-width: 640px; margin: 0 auto; width: 100%; }
 
-  .section { margin-bottom: 22px; }
+  .section { margin-bottom: 22px; padding-left: 12px; border-left: 3px solid var(--cat-accent, var(--border)); }
   .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .section-head-title { display: flex; align-items: center; gap: 8px; }
+  .section-head-title .cat-icon { width: 16px; height: 16px; display: flex; flex-shrink: 0; }
+  .section-head-title .cat-icon svg { width: 16px; height: 16px; }
   .section-head h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-soft); margin: 0; }
   .section-head button {
     background: none; border: none; color: var(--navy); font-weight: 700; font-size: 13px; cursor: pointer;
@@ -464,6 +471,13 @@ const CATEGORIES = [
   { key: "inspection", label: "Technical Inspection" }
 ];
 
+const CATEGORY_ACCENT = { maintenance: "#2F9E5B", insurance: "#7FA9E0", inspection: "#E8A33D" };
+const CATEGORY_ICONS = {
+  maintenance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2-2 2.6-2.6z"/></svg>',
+  insurance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>',
+  inspection: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 3.5h6v2H9z" fill="currentColor" stroke="none"/><path d="M9 12l2 2 4-4"/></svg>'
+};
+
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
 function loadData() {
@@ -697,8 +711,15 @@ function renderVehicle() {
       const empty = document.createElement("div");
       empty.className = "empty-state";
       empty.innerHTML = `
-        <div class="big-icon">&#128663;</div>
-        <div>No vehicles yet.</div>
+        <div class="empty-icon">
+          <svg viewBox="0 0 64 64" fill="none">
+            <circle cx="32" cy="32" r="30" stroke="#E8A33D" stroke-width="2.5"/>
+            <path d="M32 32 L42 22" stroke="#0F2547" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="32" cy="32" r="4" fill="#0F2547"/>
+          </svg>
+        </div>
+        <div class="empty-title">No vehicles yet</div>
+        <div class="empty-copy">Add your first vehicle to start tracking maintenance, insurance, and inspection dates in one place.</div>
         <button id="emptyAddVehicle">+ Add your first vehicle</button>
       `;
       mainEl.appendChild(empty);
@@ -710,6 +731,7 @@ function renderVehicle() {
   }
 
   const idx = state.data.vehicles.findIndex(v => v.id === vehicle.id);
+
   const header = document.createElement("div");
   header.className = "vehicle-header";
   const subLine = vehicle.registration ? escapeHtml(vehicle.registration) : "No registration on file";
@@ -741,9 +763,10 @@ function renderVehicle() {
   CATEGORIES.forEach(cat => {
     const section = document.createElement("div");
     section.className = "section";
+    section.style.setProperty("--cat-accent", CATEGORY_ACCENT[cat.key]);
     const head = document.createElement("div");
     head.className = "section-head";
-    head.innerHTML = `<h2>${cat.label}</h2>`;
+    head.innerHTML = `<div class="section-head-title"><span class="cat-icon" style="color:${CATEGORY_ACCENT[cat.key]}">${CATEGORY_ICONS[cat.key]}</span><h2>${cat.label}</h2></div>`;
     const addBtn = document.createElement("button");
     addBtn.textContent = "+ Add";
     addBtn.onclick = () => openItemModal(vehicle.id, cat.key, null);
@@ -883,7 +906,6 @@ document.getElementById("itemDelete").onclick = () => {
 };
 
 const categoryPickerOverlay = document.getElementById("categoryPickerOverlay");
-const CATEGORY_DOT_COLORS = { maintenance: "#2F9E5B", insurance: "#E8A33D", inspection: "#D14343" };
 
 function openCategoryPicker() {
   const list = document.getElementById("categoryPickList");
@@ -891,7 +913,7 @@ function openCategoryPicker() {
   CATEGORIES.forEach(cat => {
     const btn = document.createElement("button");
     btn.className = "category-pick-item";
-    btn.innerHTML = `<span class="dot" style="background:${CATEGORY_DOT_COLORS[cat.key]}"></span><span>${cat.label}</span>`;
+    btn.innerHTML = `<span class="cat-icon" style="color:${CATEGORY_ACCENT[cat.key]}">${CATEGORY_ICONS[cat.key]}</span><span>${cat.label}</span>`;
     btn.onclick = () => {
       categoryPickerOverlay.classList.remove("open");
       openItemModal(state.activeVehicleId, cat.key, null);
