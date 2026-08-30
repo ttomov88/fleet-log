@@ -1,6 +1,6 @@
 {
-  "name": "Fleet Log",
-  "short_name": "Fleet Log",
+  "name": "My Fleet",
+  "short_name": "My Fleet",
   "description": "Track maintenance, insurance, and technical inspections for your vehicles.",
   "start_url": "./index.html",
   "scope": "./",

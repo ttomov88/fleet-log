@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Fleet Log</title>
+<title>My Fleet</title>
 <meta name="theme-color" content="#0F2547" />
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="icons/icon-192.png" />
@@ -41,7 +41,12 @@
     padding: max(16px, env(safe-area-inset-top)) 16px 14px 16px;
     display: flex; align-items: center; justify-content: space-between;
   }
-  header.topbar .brand { display: flex; align-items: center; gap: 10px; }
+  header.topbar .brand {
+    display: flex; align-items: center; gap: 10px;
+    background: none; border: none; padding: 6px; margin: -6px; border-radius: 8px;
+    cursor: pointer;
+  }
+  header.topbar .brand:active { background: rgba(255,255,255,0.08); }
   header.topbar .brand svg { width: 26px; height: 26px; flex-shrink: 0; }
   header.topbar h1 { font-size: 16px; margin: 0; font-weight: 700; letter-spacing: 0.2px; opacity: 0.9; }
   header.topbar button.icon-btn {
@@ -262,10 +267,10 @@
 <div id="app">
   <header class="topbar">
     <button class="icon-btn" id="menuBtn" aria-label="Vehicles">&#9776;</button>
-    <div class="brand">
+    <button class="brand" id="brandHomeBtn" aria-label="Go to home screen">
       <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#E8A33D" stroke-width="2"/><path d="M12 12 L16 8.5" stroke="#F7F5F0" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="1.6" fill="#F7F5F0"/></svg>
-      <h1>Fleet Log</h1>
-    </div>
+      <h1>My Fleet</h1>
+    </button>
     <button class="icon-btn" id="settingsBtn" aria-label="Settings">&#9881;</button>
   </header>
 
@@ -508,6 +513,11 @@ function applyAvatar(el, vehicle, index) {
     el.textContent = initials(vehicle.name);
   }
 }
+
+document.getElementById("brandHomeBtn").onclick = () => {
+  state.activeVehicleId = null;
+  render();
+};
 
 function openDrawer() { renderDrawer(); drawerOverlay.classList.add("open"); }
 function closeDrawer() { drawerOverlay.classList.remove("open"); }
@@ -954,7 +964,7 @@ document.getElementById("importFile").onchange = (e) => {
 };
 
 document.getElementById("icsAllBtn").onclick = () => {
-  let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Fleet Log//EN\n";
+  let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//My Fleet//EN\n";
   state.data.vehicles.forEach(v => {
     CATEGORIES.forEach(cat => {
       (v.items[cat.key] || []).forEach(item => {
@@ -1002,7 +1012,7 @@ function checkDueReminders(force) {
   const body = due.slice(0,3).map(d => `${d.v.name}: ${d.item.label} (${d.days < 0 ? "overdue" : d.days + "d left"})`).join("\n")
     + (due.length > 3 ? `\n+${due.length - 3} more` : "");
 
-  const title = due.some(d => d.days < 0) ? "Fleet Log: overdue items" : "Fleet Log: items due soon";
+  const title = due.some(d => d.days < 0) ? "My Fleet: overdue items" : "My Fleet: items due soon";
   const options = { body, icon: "icons/icon-192.png", badge: "icons/icon-192.png", tag: "fleet-log-due" };
 
   if (navigator.serviceWorker && navigator.serviceWorker.controller) {
