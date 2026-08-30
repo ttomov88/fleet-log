@@ -1,4 +1,4 @@
-const CACHE_NAME = "fleet-log-v1";
+const CACHE_NAME = "fleet-log-v2";
 const ASSETS = [
   "./",
   "./index.html",
@@ -27,6 +27,27 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
+  const isPage = event.request.mode === "navigate" || event.request.destination === "document";
+
+  if (isPage) {
+    // Network-first for the app's HTML: always try to get the latest version when
+    // online, so updates show up immediately instead of waiting on cache logic.
+    // Falls back to the cached copy only when offline.
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Cache-first for static assets (icons, manifest) that rarely change.
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
