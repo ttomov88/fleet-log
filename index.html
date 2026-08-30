@@ -150,6 +150,14 @@
     border-radius: var(--radius); padding: 14px; font-weight: 700; font-size: 14.5px; cursor: pointer;
   }
 
+  .category-pick-list { display: flex; flex-direction: column; gap: 8px; }
+  .category-pick-item {
+    display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--cream); cursor: pointer; text-align: left;
+    width: 100%; font-size: 15px; font-weight: 600; color: var(--ink);
+  }
+  .category-pick-item .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
   main { flex: 1; padding: 16px; padding-bottom: 100px; max-width: 640px; margin: 0 auto; width: 100%; }
 
   .section { margin-bottom: 22px; }
@@ -288,6 +296,16 @@
     </div>
     <div class="drawer-list" id="drawerList"></div>
     <button class="drawer-add" id="drawerAddBtn">+ Add vehicle</button>
+  </div>
+</div>
+
+<div class="overlay" id="categoryPickerOverlay">
+  <div class="modal">
+    <h3>Add item to&hellip;</h3>
+    <div class="category-pick-list" id="categoryPickList"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="categoryPickCancel">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -779,9 +797,29 @@ document.getElementById("itemDelete").onclick = () => {
   render();
 };
 
+const categoryPickerOverlay = document.getElementById("categoryPickerOverlay");
+const CATEGORY_DOT_COLORS = { maintenance: "#2F9E5B", insurance: "#E8A33D", inspection: "#D14343" };
+
+function openCategoryPicker() {
+  const list = document.getElementById("categoryPickList");
+  list.innerHTML = "";
+  CATEGORIES.forEach(cat => {
+    const btn = document.createElement("button");
+    btn.className = "category-pick-item";
+    btn.innerHTML = `<span class="dot" style="background:${CATEGORY_DOT_COLORS[cat.key]}"></span><span>${cat.label}</span>`;
+    btn.onclick = () => {
+      categoryPickerOverlay.classList.remove("open");
+      openItemModal(state.activeVehicleId, cat.key, null);
+    };
+    list.appendChild(btn);
+  });
+  categoryPickerOverlay.classList.add("open");
+}
+document.getElementById("categoryPickCancel").onclick = () => categoryPickerOverlay.classList.remove("open");
+
 document.getElementById("fabAdd").onclick = () => {
   if (!state.activeVehicleId) { openVehicleModal(); return; }
-  openItemModal(state.activeVehicleId, "maintenance", null);
+  openCategoryPicker();
 };
 
 function updateFabVisibility() {
