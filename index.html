@@ -295,7 +295,7 @@
     <h3 id="itemModalTitle">Add item</h3>
     <div class="field">
       <label for="itemLabel">Name</label>
-      <input id="itemLabel" placeholder="e.g. Oil change, Winter tires" />
+      <input id="itemLabel" placeholder="e.g. Oil change" />
     </div>
     <div class="field">
       <label for="itemLast">Last done (optional)</label>
@@ -721,11 +721,18 @@ const itemDeleteRow = document.getElementById("itemDeleteRow");
 const itemModalTitle = document.getElementById("itemModalTitle");
 const itemCalLinks = document.getElementById("itemCalLinks");
 
+const ITEM_PLACEHOLDERS = {
+  maintenance: "e.g. Oil change, Winter tires",
+  insurance: "e.g. Third-party liability, Casco",
+  inspection: "e.g. Annual technical inspection"
+};
+
 function openItemModal(vehicleId, category, itemId) {
   state.editing = { vehicleId, category, itemId };
   const vehicle = state.data.vehicles.find(v => v.id === vehicleId);
   const item = itemId ? vehicle.items[category].find(i => i.id === itemId) : null;
   itemModalTitle.textContent = item ? "Edit item" : "Add item";
+  itemLabel.placeholder = ITEM_PLACEHOLDERS[category] || "e.g. Item name";
   itemLabel.value = item ? item.label : "";
   itemLast.value = item ? item.lastDate || "" : "";
   itemDue.value = item ? item.dueDate || "" : "";
