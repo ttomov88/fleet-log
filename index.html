@@ -1447,6 +1447,7 @@ document.getElementById("notifToggle").onchange = async (e) => {
 document.getElementById("leadDays").onchange = (e) => {
   state.settings.leadDays = parseInt(e.target.value, 10);
   saveSettings();
+  checkDueReminders(true);
 };
 
 /* ---------------- Export / Import ---------------- */
@@ -1555,7 +1556,16 @@ function checkDueReminders(force) {
       });
     });
   });
-  if (due.length === 0) return;
+  if (due.length === 0) {
+    // Nothing qualifies under the current settings — clear any stale notification
+    // still sitting in the tray from before (e.g. the lead time was just lowered).
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.ready.then(reg => {
+        reg.getNotifications({ tag: "fleet-log-due" }).then(notifs => notifs.forEach(n => n.close()));
+      }).catch(() => {});
+    }
+    return;
+  }
 
   const body = due.slice(0,3).map(d => `${d.v.name}: ${d.item.label} (${d.days < 0 ? "overdue" : d.days + "d left"})`).join("\n")
     + (due.length > 3 ? `\n+${due.length - 3} more` : "");
