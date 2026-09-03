@@ -471,6 +471,16 @@
     </div>
     <div class="settings-row">
       <div class="label-block">
+        <div class="t">Auto-backup to Downloads</div>
+        <div class="d">Quietly save a backup file once a day when you use the app</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="autoBackupToggle" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="settings-row">
+      <div class="label-block">
         <div class="t">Export backup</div>
         <div class="d">Save all your data to a file</div>
       </div>
@@ -536,7 +546,7 @@ function loadSettings() {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (raw) return JSON.parse(raw);
   } catch (e) {}
-  return { notifications: false, leadDays: 30, lastCheck: null };
+  return { notifications: false, leadDays: 30, lastCheck: null, autoBackup: false, lastAutoBackup: null };
 }
 function saveSettings() { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); }
 
@@ -862,12 +872,14 @@ function markItemDone(vehicleId, category, itemId) {
     saveData();
     render();
     showToast(`Marked as done · next due in ${item.repeatMonths} month${item.repeatMonths === 1 ? "" : "s"}`);
+    maybeAutoBackup();
   } else {
     item.dueDate = null;
     saveData();
     render();
     showToast("Marked as done · set the next due date");
     openItemModal(vehicleId, category, itemId);
+    maybeAutoBackup();
   }
 }
 
@@ -1219,6 +1231,7 @@ document.getElementById("itemSave").onclick = async () => {
   closeItemModal();
   render();
   checkDueReminders(true);
+  maybeAutoBackup();
 };
 document.getElementById("itemDelete").onclick = async () => {
   const { vehicleId, category, itemId } = state.editing;
@@ -1388,6 +1401,7 @@ document.getElementById("vehicleSave").onclick = async () => {
     vehicleOverlay.classList.remove("open");
     render();
     showToast("Vehicle updated");
+    maybeAutoBackup();
   } else {
     const v = { id: uid(), name, photo: photoId, registration, vin, note, items: { maintenance: [], insurance: [], inspection: [] } };
     state.data.vehicles.push(v);
@@ -1395,6 +1409,7 @@ document.getElementById("vehicleSave").onclick = async () => {
     saveData();
     vehicleOverlay.classList.remove("open");
     render();
+    maybeAutoBackup();
   }
 };
 
@@ -1423,9 +1438,22 @@ const settingsOverlay = document.getElementById("settingsOverlay");
 document.getElementById("settingsBtn").onclick = () => {
   document.getElementById("notifToggle").checked = !!state.settings.notifications;
   document.getElementById("leadDays").value = state.settings.leadDays || 30;
+  document.getElementById("autoBackupToggle").checked = !!state.settings.autoBackup;
   settingsOverlay.classList.add("open");
 };
 document.getElementById("settingsClose").onclick = () => settingsOverlay.classList.remove("open");
+
+document.getElementById("autoBackupToggle").onchange = (e) => {
+  state.settings.autoBackup = e.target.checked;
+  if (e.target.checked) {
+    state.settings.lastAutoBackup = null; // trigger a backup right away to confirm it works
+    saveSettings();
+    maybeAutoBackup();
+    showToast("Auto-backup turned on");
+  } else {
+    saveSettings();
+  }
+};
 
 document.getElementById("notifToggle").onchange = async (e) => {
   if (e.target.checked) {
@@ -1451,8 +1479,8 @@ document.getElementById("leadDays").onchange = (e) => {
 };
 
 /* ---------------- Export / Import ---------------- */
-document.getElementById("exportBtn").onclick = async () => {
-  showToast("Preparing backup\u2026");
+async function performBackupExport(silent) {
+  if (!silent) showToast("Preparing backup\u2026");
   // Bundle every referenced file (vehicle photos + item attachments) as base64
   // into the same JSON so the backup stays a single, restorable file.
   const files = {};
@@ -1475,11 +1503,25 @@ document.getElementById("exportBtn").onclick = async () => {
   const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = `fleet-log-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.href = url; a.download = `fleet-log-backup-${new Date().toISOString().slice(0,10)}${silent ? "-auto" : ""}.json`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
-  showToast("Backup exported");
-};
+  if (!silent) showToast("Backup exported");
+}
+
+// If auto-backup is on, quietly download one backup per calendar day, piggybacking
+// on an action the person already took (browsers block downloads with no user
+// interaction at all, so this rides along rather than firing from a timer).
+function maybeAutoBackup() {
+  if (!state.settings.autoBackup) return;
+  const todayKey = new Date().toISOString().slice(0, 10);
+  if (state.settings.lastAutoBackup === todayKey) return;
+  state.settings.lastAutoBackup = todayKey;
+  saveSettings();
+  performBackupExport(true).then(() => showToast("Auto-backup saved to Downloads")).catch(() => {});
+}
+
+document.getElementById("exportBtn").onclick = () => performBackupExport(false);
 document.getElementById("importBtn").onclick = () => document.getElementById("importFile").click();
 document.getElementById("importFile").onchange = (e) => {
   const file = e.target.files[0];
