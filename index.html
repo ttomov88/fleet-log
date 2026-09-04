@@ -718,16 +718,54 @@ function applyAvatar(el, vehicle, index) {
 }
 
 document.getElementById("brandHomeBtn").onclick = () => {
-  state.activeVehicleId = null;
-  render();
+  if (state.activeVehicleId) closeNav();
 };
 
-function openDrawer() { renderDrawer(); drawerOverlay.classList.add("open"); }
-function closeDrawer() { drawerOverlay.classList.remove("open"); }
+/* ---------------- Back-gesture / history navigation ----------------
+   The app is a single page with no real URLs, so by default there's nothing
+   for the phone's back gesture to step through — it falls straight through
+   to closing the installed app. We fix that by pushing a history entry each
+   time a screen/modal opens, and only ever closing things via history
+   navigation (closeNav), so a real back-gesture and an in-app Cancel/Save
+   button both funnel through the same single close handler below. */
+let navDepth = 0;
+let exitArmed = false;
+let exitArmTimer = null;
+function pushNav() { navDepth++; history.pushState({ fleetNav: navDepth }, "", location.href); }
+function replaceNav() { history.replaceState({ fleetNav: navDepth }, "", location.href); }
+function closeNav() { history.back(); }
+window.addEventListener("popstate", () => {
+  if (navDepth > 0) navDepth--;
+  performTopLevelClose();
+});
+function performTopLevelClose() {
+  if (itemOverlay.classList.contains("open")) { itemOverlay.classList.remove("open"); state.editing = null; return; }
+  if (vehicleOverlay.classList.contains("open")) { vehicleOverlay.classList.remove("open"); return; }
+  if (categoryPickerOverlay.classList.contains("open")) { categoryPickerOverlay.classList.remove("open"); return; }
+  if (settingsOverlay.classList.contains("open")) { settingsOverlay.classList.remove("open"); return; }
+  if (drawerOverlay.classList.contains("open")) { drawerOverlay.classList.remove("open"); return; }
+  if (state.activeVehicleId) { state.activeVehicleId = null; render(); return; }
+  // Truly at the root screen with nothing left to close in-app — require a second
+  // back press within a couple seconds before actually letting the app exit.
+  if (!exitArmed) {
+    exitArmed = true;
+    pushNav();
+    showToast("Press back again to exit");
+    clearTimeout(exitArmTimer);
+    exitArmTimer = setTimeout(() => { exitArmed = false; }, 2000);
+  }
+  // else: already armed — don't push a new entry, so this back press actually exits.
+}
+
+function openDrawer() { renderDrawer(); drawerOverlay.classList.add("open"); pushNav(); }
+function closeDrawer() { closeNav(); }
 document.getElementById("menuBtn").onclick = openDrawer;
 document.getElementById("drawerCloseBtn").onclick = closeDrawer;
 drawerOverlay.addEventListener("click", (e) => { if (e.target === drawerOverlay) closeDrawer(); });
-document.getElementById("drawerAddBtn").onclick = () => { closeDrawer(); openVehicleModal(); };
+document.getElementById("drawerAddBtn").onclick = () => {
+  drawerOverlay.classList.remove("open");
+  openVehicleModal(true);
+};
 
 const GRIP_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><circle cx="8" cy="6" r="1.6"/><circle cx="16" cy="6" r="1.6"/><circle cx="8" cy="12" r="1.6"/><circle cx="16" cy="12" r="1.6"/><circle cx="8" cy="18" r="1.6"/><circle cx="16" cy="18" r="1.6"/></svg>';
 
@@ -824,7 +862,13 @@ function renderDrawer() {
     row.insertAdjacentHTML("beforeend", statusCountBadgeHTML(v));
     row.appendChild(grip);
     row.appendChild(editBtn);
-    enableDragReorder(row, drawerList, v.id, () => { state.activeVehicleId = v.id; closeDrawer(); render(); });
+    enableDragReorder(row, drawerList, v.id, () => {
+      const wasAtRoot = !state.activeVehicleId;
+      state.activeVehicleId = v.id;
+      render();
+      if (wasAtRoot) { drawerOverlay.classList.remove("open"); replaceNav(); }
+      else { closeNav(); }
+    });
     drawerList.appendChild(row);
   });
   if (state.data.vehicles.length === 0) {
@@ -934,7 +978,7 @@ function renderVehiclePicker() {
     grip.className = "grip-icon";
     grip.innerHTML = GRIP_ICON;
     card.appendChild(grip);
-    enableDragReorder(card, list, v.id, () => { state.activeVehicleId = v.id; render(); });
+    enableDragReorder(card, list, v.id, () => { pushNav(); state.activeVehicleId = v.id; render(); });
     list.appendChild(card);
   });
   wrap.appendChild(list);
@@ -1162,7 +1206,7 @@ itemAttachmentInput.onchange = (e) => {
   renderAttachmentPreview(file.name, URL.createObjectURL(file));
 };
 
-function openItemModal(vehicleId, category, itemId) {
+function openItemModal(vehicleId, category, itemId, replace) {
   state.editing = { vehicleId, category, itemId };
   const vehicle = state.data.vehicles.find(v => v.id === vehicleId);
   const item = itemId ? vehicle.items[category].find(i => i.id === itemId) : null;
@@ -1190,8 +1234,9 @@ function openItemModal(vehicleId, category, itemId) {
     itemCalLinks.appendChild(a);
   }
   itemOverlay.classList.add("open");
+  if (replace) replaceNav(); else pushNav();
 }
-function closeItemModal() { itemOverlay.classList.remove("open"); state.editing = null; }
+function closeItemModal() { closeNav(); }
 
 async function commitPendingAttachment() {
   if (pendingAttachmentFile) {
@@ -1257,13 +1302,14 @@ function openCategoryPicker() {
     btn.innerHTML = `<span class="cat-icon" style="color:${CATEGORY_ACCENT[cat.key]}">${CATEGORY_ICONS[cat.key]}</span><span>${cat.label}</span>`;
     btn.onclick = () => {
       categoryPickerOverlay.classList.remove("open");
-      openItemModal(state.activeVehicleId, cat.key, null);
+      openItemModal(state.activeVehicleId, cat.key, null, true);
     };
     list.appendChild(btn);
   });
   categoryPickerOverlay.classList.add("open");
+  pushNav();
 }
-document.getElementById("categoryPickCancel").onclick = () => categoryPickerOverlay.classList.remove("open");
+document.getElementById("categoryPickCancel").onclick = () => closeNav();
 
 document.getElementById("fabAdd").onclick = () => {
   if (!state.activeVehicleId) { openVehicleModal(); return; }
@@ -1286,7 +1332,7 @@ let existingPhotoId = null;   // fileId already saved on the vehicle being edite
 let pendingPhotoBlob = null;  // newly picked Blob this session, not yet saved
 let removePhotoRequested = false;
 
-document.getElementById("vehicleCancel").onclick = () => vehicleOverlay.classList.remove("open");
+document.getElementById("vehicleCancel").onclick = () => closeNav();
 
 function renderPhotoPreview(previewUrl) {
   if (previewUrl) {
@@ -1333,7 +1379,7 @@ vehiclePhotoInput.onchange = (e) => {
   reader.readAsDataURL(file);
 };
 
-function openVehicleModal() {
+function openVehicleModal(replace) {
   editingVehicleId = null;
   existingPhotoId = null;
   pendingPhotoBlob = null;
@@ -1346,6 +1392,7 @@ function openVehicleModal() {
   document.getElementById("vehicleNote").value = "";
   renderPhotoPreview(null);
   vehicleOverlay.classList.add("open");
+  if (replace) replaceNav(); else pushNav();
 }
 
 function openVehicleEditModal(vehicleId) {
@@ -1368,6 +1415,7 @@ function openVehicleEditModal(vehicleId) {
     }).catch(() => {});
   }
   vehicleOverlay.classList.add("open");
+  pushNav();
 }
 
 async function commitPendingPhoto() {
@@ -1399,18 +1447,23 @@ document.getElementById("vehicleSave").onclick = async () => {
     v.vin = vin;
     v.note = note;
     saveData();
-    vehicleOverlay.classList.remove("open");
     render();
     showToast("Vehicle updated");
     maybeAutoBackup();
+    closeNav();
   } else {
+    const wasAtRoot = !state.activeVehicleId;
     const v = { id: uid(), name, photo: photoId, registration, vin, note, items: { maintenance: [], insurance: [], inspection: [] } };
     state.data.vehicles.push(v);
     state.activeVehicleId = v.id;
     saveData();
-    vehicleOverlay.classList.remove("open");
     render();
     maybeAutoBackup();
+    // Creating a vehicle from the root screen both closes this modal and enters
+    // vehicle-detail in one motion — net navigation depth is unchanged, so relabel
+    // the current history entry instead of popping it.
+    if (wasAtRoot) { vehicleOverlay.classList.remove("open"); replaceNav(); }
+    else { closeNav(); }
   }
 };
 
@@ -1429,9 +1482,9 @@ document.getElementById("vehicleDelete").onclick = async () => {
     state.activeVehicleId = state.data.vehicles[0]?.id || null;
   }
   saveData();
-  vehicleOverlay.classList.remove("open");
   render();
   showToast("Vehicle deleted");
+  closeNav();
 };
 
 /* ---------------- Settings modal ---------------- */
@@ -1441,8 +1494,9 @@ document.getElementById("settingsBtn").onclick = () => {
   document.getElementById("leadDays").value = state.settings.leadDays || 30;
   document.getElementById("autoBackupToggle").checked = !!state.settings.autoBackup;
   settingsOverlay.classList.add("open");
+  pushNav();
 };
-document.getElementById("settingsClose").onclick = () => settingsOverlay.classList.remove("open");
+document.getElementById("settingsClose").onclick = () => closeNav();
 
 document.getElementById("autoBackupToggle").onchange = (e) => {
   state.settings.autoBackup = e.target.checked;
@@ -1545,7 +1599,7 @@ document.getElementById("importFile").onchange = (e) => {
       state.activeVehicleId = null;
       saveData();
       render();
-      settingsOverlay.classList.remove("open");
+      closeNav();
       showToast("Backup imported");
     } catch (err) {
       showToast("Could not read that file");
@@ -1640,6 +1694,7 @@ document.addEventListener("visibilitychange", () => {
 
 /* ---------------- Init ---------------- */
 render();
+pushNav(); // root sentinel, so the very first back press is interceptable for the exit-confirm above
 setTimeout(() => checkDueReminders(false), 1200);
 migrateInlineFilesToStore().then(() => {
   // Re-render in case the current screen shows a photo/attachment that just moved store.
