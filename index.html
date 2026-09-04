@@ -729,6 +729,8 @@ document.getElementById("brandHomeBtn").onclick = () => {
    navigation (closeNav), so a real back-gesture and an in-app Cancel/Save
    button both funnel through the same single close handler below. */
 let navDepth = 0;
+let exitArmed = false;
+let exitArmTimer = null;
 function pushNav() { navDepth++; history.pushState({ fleetNav: navDepth }, "", location.href); }
 function replaceNav() { history.replaceState({ fleetNav: navDepth }, "", location.href); }
 function closeNav() { history.back(); }
@@ -743,6 +745,16 @@ function performTopLevelClose() {
   if (settingsOverlay.classList.contains("open")) { settingsOverlay.classList.remove("open"); return; }
   if (drawerOverlay.classList.contains("open")) { drawerOverlay.classList.remove("open"); return; }
   if (state.activeVehicleId) { state.activeVehicleId = null; render(); return; }
+  // Truly at the root screen with nothing left to close in-app — require a second
+  // back press within a couple seconds before actually letting the app exit.
+  if (!exitArmed) {
+    exitArmed = true;
+    pushNav();
+    showToast("Press back again to exit");
+    clearTimeout(exitArmTimer);
+    exitArmTimer = setTimeout(() => { exitArmed = false; }, 2000);
+  }
+  // else: already armed — don't push a new entry, so this back press actually exits.
 }
 
 function openDrawer() { renderDrawer(); drawerOverlay.classList.add("open"); pushNav(); }
@@ -1682,6 +1694,7 @@ document.addEventListener("visibilitychange", () => {
 
 /* ---------------- Init ---------------- */
 render();
+pushNav(); // root sentinel, so the very first back press is interceptable for the exit-confirm above
 setTimeout(() => checkDueReminders(false), 1200);
 migrateInlineFilesToStore().then(() => {
   // Re-render in case the current screen shows a photo/attachment that just moved store.
